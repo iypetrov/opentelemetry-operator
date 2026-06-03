@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"strings"
 	"testing"
@@ -18,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	admissionv1 "k8s.io/api/admission/v1"
-	appsv1 "k8s.io/api/apps/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authv1 "k8s.io/api/authorization/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -584,12 +582,10 @@ var cfgYaml = `receivers:
 `
 
 func TestOTELColValidatingWebhook(t *testing.T) {
-	minusOne := int32(-1)
 	zero := int32(0)
 	one := int32(1)
 	three := int32(3)
 	five := int32(5)
-	maxInt := int32(math.MaxInt32)
 
 	cfg := v1beta1.Config{
 		Service: v1beta1.Service{
@@ -798,45 +794,6 @@ func TestOTELColValidatingWebhook(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid mode with volume claim templates",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeSidecar,
-					StatefulSetCommonFields: v1beta1.StatefulSetCommonFields{
-						VolumeClaimTemplates: []v1.PersistentVolumeClaim{{}, {}},
-					},
-				},
-			},
-			expectedErr: "does not support the attribute 'volumeClaimTemplates'",
-		},
-		{
-			name: "invalid mode with persistentVolumeClaimRetentionPolicy",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeSidecar,
-					StatefulSetCommonFields: v1beta1.StatefulSetCommonFields{
-						PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
-							WhenDeleted: appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
-							WhenScaled:  appsv1.DeletePersistentVolumeClaimRetentionPolicyType,
-						},
-					},
-				},
-			},
-			expectedErr: "does not support the attribute 'persistentVolumeClaimRetentionPolicy'",
-		},
-		{
-			name: "invalid mode with tolerations",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeSidecar,
-					OpenTelemetryCommonFields: v1beta1.OpenTelemetryCommonFields{
-						Tolerations: []v1.Toleration{{}, {}},
-					},
-				},
-			},
-			expectedErr: "does not support the attribute 'tolerations'",
-		},
-		{
 			name: "invalid mode with target allocator",
 			otelcol: v1beta1.OpenTelemetryCollector{
 				Spec: v1beta1.OpenTelemetryCollectorSpec{
@@ -940,43 +897,6 @@ func TestOTELColValidatingWebhook(t *testing.T) {
 			},
 		},
 		{
-			name: "it should return error when minReplica is set but maxReplica is not set",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MinReplicas: &three,
-					},
-				},
-			},
-			expectedErr: "spec.maxReplica must be set when spec.minReplica is set",
-		},
-		{
-			name: "invalid replicas, greater than max",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					OpenTelemetryCommonFields: v1beta1.OpenTelemetryCommonFields{
-						Replicas: &five,
-					},
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MaxReplicas: &three,
-					},
-				},
-			},
-			expectedErr: "replicas must not be greater than maxReplicas",
-		},
-		{
-			name: "invalid min replicas, greater than max",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MaxReplicas: &three,
-						MinReplicas: &five,
-					},
-				},
-			},
-			expectedErr: "minReplicas must not be greater than maxReplicas",
-		},
-		{
 			name: "invalid min replicas, lesser than 1",
 			otelcol: v1beta1.OpenTelemetryCollector{
 				Spec: v1beta1.OpenTelemetryCollectorSpec{
@@ -986,70 +906,6 @@ func TestOTELColValidatingWebhook(t *testing.T) {
 					},
 				},
 			},
-		},
-		{
-			name: "invalid autoscaler scale down stablization window - <0",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MaxReplicas: &three,
-						Behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
-							ScaleDown: &autoscalingv2.HPAScalingRules{
-								StabilizationWindowSeconds: &minusOne,
-							},
-						},
-					},
-				},
-			},
-			expectedErr: "scaleDown.stabilizationWindowSeconds should be >=0 and <=3600",
-		},
-		{
-			name: "invalid autoscaler scale down stablization window - >3600",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MaxReplicas: &three,
-						Behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
-							ScaleDown: &autoscalingv2.HPAScalingRules{
-								StabilizationWindowSeconds: &maxInt,
-							},
-						},
-					},
-				},
-			},
-			expectedErr: "scaleDown.stabilizationWindowSeconds should be >=0 and <=3600",
-		},
-		{
-			name: "invalid autoscaler scale up stablization window - <0",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MaxReplicas: &three,
-						Behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
-							ScaleUp: &autoscalingv2.HPAScalingRules{
-								StabilizationWindowSeconds: &minusOne,
-							},
-						},
-					},
-				},
-			},
-			expectedErr: "scaleUp.stabilizationWindowSeconds should be >=0 and <=3600",
-		},
-		{
-			name: "invalid autoscaler scale up stablization window - >3600",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MaxReplicas: &three,
-						Behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
-							ScaleUp: &autoscalingv2.HPAScalingRules{
-								StabilizationWindowSeconds: &maxInt,
-							},
-						},
-					},
-				},
-			},
-			expectedErr: "scaleUp.stabilizationWindowSeconds should be >=0 and <=3600",
 		},
 		{
 			name: "invalid autoscaler target cpu utilization",
@@ -1072,18 +928,6 @@ func TestOTELColValidatingWebhook(t *testing.T) {
 					},
 				},
 			},
-		},
-		{
-			name: "autoscaler minReplicas is less than maxReplicas",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Autoscaler: &v1beta1.AutoscalerSpec{
-						MaxReplicas: &one,
-						MinReplicas: &five,
-					},
-				},
-			},
-			expectedErr: "the OpenTelemetry Spec autoscale configuration is incorrect, minReplicas must not be greater than maxReplicas",
 		},
 		{
 			name: "invalid autoscaler metric type",
@@ -1150,117 +994,6 @@ func TestOTELColValidatingWebhook(t *testing.T) {
 				},
 			},
 			expectedErr: "the OpenTelemetry Spec autoscale configuration is incorrect, invalid pods target type",
-		},
-		{
-			name: "invalid deployment mode incompatible with ingress settings",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeSidecar,
-					Ingress: v1beta1.Ingress{
-						Type: v1beta1.IngressTypeIngress,
-					},
-				},
-			},
-			expectedErr: fmt.Sprintf("Ingress can only be used in combination with the modes: %s, %s, %s", v1beta1.ModeDeployment, v1beta1.ModeDaemonSet, v1beta1.ModeStatefulSet),
-		},
-		{
-			name: "invalid mode with priorityClassName",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeSidecar,
-					OpenTelemetryCommonFields: v1beta1.OpenTelemetryCommonFields{
-						PriorityClassName: "test-class",
-					},
-				},
-			},
-			expectedErr: "does not support the attribute 'priorityClassName'",
-		},
-		{
-			name: "invalid mode with affinity",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeSidecar,
-					OpenTelemetryCommonFields: v1beta1.OpenTelemetryCommonFields{
-						Affinity: &v1.Affinity{
-							NodeAffinity: &v1.NodeAffinity{
-								RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{
-									NodeSelectorTerms: []v1.NodeSelectorTerm{
-										{
-											MatchExpressions: []v1.NodeSelectorRequirement{
-												{
-													Key:      "node",
-													Operator: v1.NodeSelectorOpIn,
-													Values:   []string{"test-node"},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			expectedErr: "does not support the attribute 'affinity'",
-		},
-		{
-			name: "invalid AdditionalContainers",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeSidecar,
-					OpenTelemetryCommonFields: v1beta1.OpenTelemetryCommonFields{
-						AdditionalContainers: []v1.Container{
-							{
-								Name: "test",
-							},
-						},
-					},
-				},
-			},
-			expectedErr: "the OpenTelemetry Collector mode is set to sidecar, which does not support the attribute 'AdditionalContainers'",
-		},
-		{
-			name: "missing ingress hostname for subdomain ruleType",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Ingress: v1beta1.Ingress{
-						RuleType: v1beta1.IngressRuleTypeSubdomain,
-					},
-				},
-			},
-			expectedErr: "a valid Ingress hostname has to be defined for subdomain ruleType",
-		},
-		{
-			name: "invalid updateStrategy for Deployment mode",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeDeployment,
-					DaemonSetUpdateStrategy: appsv1.DaemonSetUpdateStrategy{
-						Type: "RollingUpdate",
-						RollingUpdate: &appsv1.RollingUpdateDaemonSet{
-							MaxSurge:       &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
-							MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
-						},
-					},
-				},
-			},
-			expectedErr: "the OpenTelemetry Collector mode is set to deployment, which does not support the attribute 'updateStrategy'",
-		},
-		{
-			name: "invalid updateStrategy for Statefulset mode",
-			otelcol: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{
-					Mode: v1beta1.ModeStatefulSet,
-					DeploymentUpdateStrategy: appsv1.DeploymentStrategy{
-						Type: "RollingUpdate",
-						RollingUpdate: &appsv1.RollingUpdateDeployment{
-							MaxSurge:       &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
-							MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
-						},
-					},
-				},
-			},
-			expectedErr: "the OpenTelemetry Collector mode is set to statefulset, which does not support the attribute 'deploymentUpdateStrategy'",
 		},
 		{
 			name: "missing port for ingress type",
@@ -1559,75 +1292,6 @@ func TestCollectorMTLSValidation(t *testing.T) {
 			} else {
 				assert.ErrorContains(t, err, test.expectedErr)
 			}
-		})
-	}
-}
-
-func TestOTELColValidateUpdateWebhook(t *testing.T) {
-	tests := []struct {
-		name             string
-		otelcolOld       v1beta1.OpenTelemetryCollector
-		otelcolNew       v1beta1.OpenTelemetryCollector
-		expectedErr      string
-		expectedWarnings []string
-		shouldFailSar    bool
-	}{
-		{
-			name: "mode should not be changed",
-			otelcolOld: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{Mode: v1beta1.ModeStatefulSet},
-			},
-			otelcolNew: v1beta1.OpenTelemetryCollector{
-				Spec: v1beta1.OpenTelemetryCollectorSpec{Mode: v1beta1.ModeDeployment},
-			},
-			expectedErr: "which does not support modification",
-		},
-	}
-
-	bv := func(_ context.Context, collector v1beta1.OpenTelemetryCollector) admission.Warnings {
-		var warnings admission.Warnings
-		cfg := config.Config{
-			CollectorImage:       "default-collector",
-			TargetAllocatorImage: "default-ta-allocator",
-		}
-		params := manifests.Params{
-			Log:     logr.Discard(),
-			Config:  cfg,
-			OtelCol: collector,
-		}
-		_, err := collectorManifests.Build(params)
-		if err != nil {
-			warnings = append(warnings, err.Error())
-			return warnings
-		}
-		return nil
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			cfg := config.Config{
-				CollectorImage:       "collector:v0.0.0",
-				TargetAllocatorImage: "ta:v0.0.0",
-			}
-			cvw := webhook.NewCollectorWebhook(
-				logr.Discard(),
-				testScheme,
-				cfg,
-				getReviewer(test.shouldFailSar),
-				nil,
-				nil,
-				bv,
-				nil,
-			)
-			ctx := context.Background()
-			warnings, err := cvw.ValidateUpdate(ctx, &test.otelcolOld, &test.otelcolNew)
-			if test.expectedErr == "" {
-				assert.NoError(t, err)
-			} else {
-				assert.ErrorContains(t, err, test.expectedErr)
-			}
-			assert.Equal(t, len(test.expectedWarnings), len(warnings))
-			assert.ElementsMatch(t, warnings, test.expectedWarnings)
 		})
 	}
 }

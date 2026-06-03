@@ -34,6 +34,8 @@ type MetricSpec struct {
 }
 
 // AutoscalerSpec defines the OpenTelemetryCollector's pod autoscaling specification.
+// +kubebuilder:validation:XValidation:rule="!has(self.behavior) || !has(self.behavior.scaleDown) || !has(self.behavior.scaleDown.stabilizationWindowSeconds) || (self.behavior.scaleDown.stabilizationWindowSeconds >= 0 && self.behavior.scaleDown.stabilizationWindowSeconds <= 3600)",message="the OpenTelemetry Spec autoscale configuration is incorrect, scaleDown.stabilizationWindowSeconds should be >=0 and <=3600"
+// +kubebuilder:validation:XValidation:rule="!has(self.behavior) || !has(self.behavior.scaleUp) || !has(self.behavior.scaleUp.stabilizationWindowSeconds) || (self.behavior.scaleUp.stabilizationWindowSeconds >= 0 && self.behavior.scaleUp.stabilizationWindowSeconds <= 3600)",message="the OpenTelemetry Spec autoscale configuration is incorrect, scaleUp.stabilizationWindowSeconds should be >=0 and <=3600"
 type AutoscalerSpec struct {
 	// MinReplicas sets a lower bound to the autoscaling feature.  Set this if you are using autoscaling. It must be at least 1
 	// +optional

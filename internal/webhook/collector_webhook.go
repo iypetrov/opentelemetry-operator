@@ -138,9 +138,6 @@ func (c CollectorWebhook) ValidateCreate(ctx context.Context, otelcol *v1beta1.O
 }
 
 func (c CollectorWebhook) ValidateUpdate(ctx context.Context, otelcolOld, otelcol *v1beta1.OpenTelemetryCollector) (admission.Warnings, error) {
-	if otelcolOld.Spec.Mode != otelcol.Spec.Mode {
-		return admission.Warnings{}, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support modification", otelcolOld.Spec.Mode)
-	}
 	warnings, err := c.Validate(ctx, otelcol)
 	if err != nil {
 		return warnings, err
@@ -178,38 +175,10 @@ func (c CollectorWebhook) Validate(ctx context.Context, r *v1beta1.OpenTelemetry
 		warnings = append(warnings, fmt.Sprintf("Collector config spec.config has null objects: %s. For compatibility with other tooling, such as kustomize and kubectl edit, it is recommended to use empty objects e.g. batch: {}.", strings.Join(nullObjects, ", ")))
 	}
 
-	// validate volumeClaimTemplates
-	if r.Spec.Mode != v1beta1.ModeStatefulSet && len(r.Spec.VolumeClaimTemplates) > 0 {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'volumeClaimTemplates'", r.Spec.Mode)
-	}
-
-	// validate persistentVolumeClaimRetentionPolicy
-	if r.Spec.Mode != v1beta1.ModeStatefulSet && r.Spec.PersistentVolumeClaimRetentionPolicy != nil {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'persistentVolumeClaimRetentionPolicy'", r.Spec.Mode)
-	}
-
-	// validate tolerations
-	// NOTE: this validation is also implemented in CRDs using CEL (Common Expression Language)
-	if r.Spec.Mode == v1beta1.ModeSidecar && len(r.Spec.Tolerations) > 0 {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'tolerations'", r.Spec.Mode)
-	}
-
-	// validate priorityClassName
-	// NOTE: this validation is also implemented in CRDs using CEL (Common Expression Language)
-	if r.Spec.Mode == v1beta1.ModeSidecar && r.Spec.PriorityClassName != "" {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'priorityClassName'", r.Spec.Mode)
-	}
-
-	// validate affinity
-	// NOTE: this validation is also implemented in CRDs using CEL (Common Expression Language)
-	if r.Spec.Mode == v1beta1.ModeSidecar && r.Spec.Affinity != nil {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'affinity'", r.Spec.Mode)
-	}
-
-	// NOTE: this validation is also implemented in CRDs using CEL (Common Expression Language)
-	if r.Spec.Mode == v1beta1.ModeSidecar && len(r.Spec.AdditionalContainers) > 0 {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'AdditionalContainers'", r.Spec.Mode)
-	}
+	// Mode-dependent field validations (volumeClaimTemplates, persistentVolumeClaimRetentionPolicy,
+	// tolerations, priorityClassName, affinity, additionalContainers, daemonSetUpdateStrategy,
+	// deploymentUpdateStrategy, ingress.type/ruleType, autoscaler min/max/replicas) are enforced
+	// by CEL rules on OpenTelemetryCollectorSpec — see opentelemetrycollector_types.go.
 
 	// validate target allocator configs
 	if r.Spec.TargetAllocator.Enabled {
@@ -246,59 +215,18 @@ func (c CollectorWebhook) Validate(ctx context.Context, r *v1beta1.OpenTelemetry
 	if r.Spec.Autoscaler != nil && r.Spec.Autoscaler.MaxReplicas != nil {
 		maxReplicas = r.Spec.Autoscaler.MaxReplicas
 	}
-	var minReplicas *int32
-	if r.Spec.Autoscaler != nil && r.Spec.Autoscaler.MinReplicas != nil {
-		minReplicas = r.Spec.Autoscaler.MinReplicas
-	}
 
-	if r.Spec.Autoscaler != nil && r.Spec.Autoscaler.MinReplicas != nil && r.Spec.Autoscaler.MaxReplicas == nil {
-		return warnings, errors.New("spec.maxReplica must be set when spec.minReplica is set")
-	}
-
-	// check deprecated .Spec.MinReplicas if minReplicas is not set
-	if minReplicas == nil {
-		minReplicas = r.Spec.Replicas
-	}
-
-	// validate autoscale with horizontal pod autoscaler
-	if maxReplicas != nil {
-		if r.Spec.Replicas != nil && *r.Spec.Replicas > *maxReplicas {
-			return warnings, errors.New("the OpenTelemetry Spec autoscale configuration is incorrect, replicas must not be greater than maxReplicas")
-		}
-
-		if minReplicas != nil && *minReplicas > *maxReplicas {
-			return warnings, errors.New("the OpenTelemetry Spec autoscale configuration is incorrect, minReplicas must not be greater than maxReplicas")
-		}
-
-		if r.Spec.Autoscaler != nil {
-			return warnings, checkAutoscalerSpec(r.Spec.Autoscaler)
+	// validate autoscaler metric specs (range checks for stabilization windows are enforced
+	// by CEL on AutoscalerSpec — see common.go). Replica/min/max relationships and the
+	// deprecated minReplicas/maxReplicas pairing are enforced by CEL on OpenTelemetryCollectorSpec.
+	if maxReplicas != nil && r.Spec.Autoscaler != nil {
+		if err := checkAutoscalerSpec(r.Spec.Autoscaler); err != nil {
+			return warnings, err
 		}
 	}
 
-	if r.Spec.Ingress.Type == v1beta1.IngressTypeIngress && r.Spec.Mode == v1beta1.ModeSidecar {
-		return warnings, fmt.Errorf("the OpenTelemetry Spec Ingress configuration is incorrect. Ingress can only be used in combination with the modes: %s, %s, %s",
-			v1beta1.ModeDeployment, v1beta1.ModeDaemonSet, v1beta1.ModeStatefulSet,
-		)
-	}
-
-	if r.Spec.Ingress.Type == v1beta1.IngressTypeIngress && r.Spec.Mode == v1beta1.ModeSidecar {
-		return warnings, fmt.Errorf("the OpenTelemetry Spec Ingress configuiration is incorrect. Ingress can only be used in combination with the modes: %s, %s, %s",
-			v1beta1.ModeDeployment, v1beta1.ModeDaemonSet, v1beta1.ModeStatefulSet,
-		)
-	}
-	if r.Spec.Ingress.RuleType == v1beta1.IngressRuleTypeSubdomain && (r.Spec.Ingress.Hostname == "" || r.Spec.Ingress.Hostname == "*") {
-		return warnings, errors.New("a valid Ingress hostname has to be defined for subdomain ruleType")
-	}
-
-	// validate updateStrategy for DaemonSet
-	if r.Spec.Mode != v1beta1.ModeDaemonSet && len(r.Spec.DaemonSetUpdateStrategy.Type) > 0 {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'updateStrategy'", r.Spec.Mode)
-	}
-
-	// validate updateStrategy for Deployment
-	if r.Spec.Mode != v1beta1.ModeDeployment && len(r.Spec.DeploymentUpdateStrategy.Type) > 0 {
-		return warnings, fmt.Errorf("the OpenTelemetry Collector mode is set to %s, which does not support the attribute 'deploymentUpdateStrategy'", r.Spec.Mode)
-	}
+	// Ingress mode/ruleType validation is enforced by CEL on OpenTelemetryCollectorSpec.
+	// daemonSetUpdateStrategy and deploymentUpdateStrategy mode constraints are also enforced by CEL.
 
 	if c.fips != nil {
 		components := otelconfig.GetEnabledComponents(&r.Spec.Config)
@@ -465,17 +393,8 @@ func ValidatePorts(ports []v1beta1.PortsSpec) error {
 }
 
 func checkAutoscalerSpec(autoscaler *v1beta1.AutoscalerSpec) error {
-	if autoscaler.Behavior != nil {
-		if autoscaler.Behavior.ScaleDown != nil && autoscaler.Behavior.ScaleDown.StabilizationWindowSeconds != nil &&
-			(*autoscaler.Behavior.ScaleDown.StabilizationWindowSeconds < int32(0) || *autoscaler.Behavior.ScaleDown.StabilizationWindowSeconds > 3600) {
-			return errors.New("the OpenTelemetry Spec autoscale configuration is incorrect, scaleDown.stabilizationWindowSeconds should be >=0 and <=3600")
-		}
-
-		if autoscaler.Behavior.ScaleUp != nil && autoscaler.Behavior.ScaleUp.StabilizationWindowSeconds != nil &&
-			(*autoscaler.Behavior.ScaleUp.StabilizationWindowSeconds < int32(0) || *autoscaler.Behavior.ScaleUp.StabilizationWindowSeconds > 3600) {
-			return errors.New("the OpenTelemetry Spec autoscale configuration is incorrect, scaleUp.stabilizationWindowSeconds should be >=0 and <=3600")
-		}
-	}
+	// scaleDown.stabilizationWindowSeconds and scaleUp.stabilizationWindowSeconds range checks
+	// are enforced by CEL on AutoscalerSpec — see common.go.
 
 	for _, metric := range autoscaler.Metrics {
 		if metric.Type != autoscalingv2.PodsMetricSourceType {
