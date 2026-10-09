@@ -1,3 +1,6 @@
+SYSTEM_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+SYSTEM_ARCH := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
 # Run e2e tests for httpRoute
 .PHONY: e2e-httproute
 e2e-httproute: chainsaw
@@ -205,7 +208,7 @@ SED ?= $(shell which gsed 2>/dev/null || which sed)
 .DEFAULT_GOAL := help
 # Show this help message
 .PHONY: help
-help: 
+help:
 	@echo -e "\033[1;3;34mOpenTelemetry Operator.\033[0m\n"
 	@echo 'Usage: make [target]'
 	@echo ''
@@ -232,7 +235,7 @@ help:
 
 ##@ PR
 # Verify generated code, manifests, bundles, and API docs are up to date
-.PHONY: ensure-update-is-noop 
+.PHONY: ensure-update-is-noop
 ensure-update-is-noop: VERSION=$(OPERATOR_VERSION)
 ensure-update-is-noop: DOCKER_USER=open-telemetry
 ensure-update-is-noop: set-image-controller update
@@ -613,7 +616,7 @@ e2e-targetallocator-cr: chainsaw
 
 # Add cert-manager permissions for mTLS testing
 .PHONY: add-certmanager-permissions
-add-certmanager-permissions: 
+add-certmanager-permissions:
 	# Kustomize only allows patches in the folder where the kustomization is located
 	# This folder is ignored by .gitignore
 	cp -r tests/e2e-ta-collector-mtls/certmanager-permissions config/rbac/certmanager-permissions
@@ -905,6 +908,7 @@ GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 CHAINSAW ?= $(LOCALBIN)/chainsaw
 GOTESTSUM ?= $(LOCALBIN)/gotestsum
 GOVULNCHECK ?= $(LOCALBIN)/govulncheck
+JQ ?= $(LOCALBIN)/jq
 
 # renovate: datasource=go depName=sigs.k8s.io/kustomize/kustomize/v5
 KUSTOMIZE_VERSION ?= v5.8.2
@@ -920,6 +924,7 @@ CHAINSAW_VERSION ?= v0.2.15
 GOTESTSUM_VERSION ?= v1.13.0
 # renovate: datasource=go depName=golang.org/x/vuln/cmd/govulncheck
 GOVULNCHECK_VERSION ?= v1.8.0
+JQ_VERSION ?= jq-1.8.2
 PROMTOOL ?= $(LOCALBIN)/promtool
 # promtool is the golden source for the target-allocator conformance suite. It must match
 # the prometheus/prometheus library the operator links against, so derive the release version
@@ -929,7 +934,7 @@ PROMTOOL_VERSION ?= $(shell awk '$$1=="github.com/prometheus/prometheus"{split($
 
 # Install all development tools
 .PHONY: install-tools
-install-tools: kustomize golangci-lint kind controller-gen crdoc operator-sdk chainsaw gotestsum cmctl govulncheck
+install-tools: kustomize golangci-lint kind controller-gen crdoc operator-sdk chainsaw gotestsum cmctl govulncheck jq
 
 # Download kustomize locally if necessary
 .PHONY: kustomize
@@ -989,6 +994,19 @@ gotestsum: ## Find or download gotestsum
 govulncheck: ## Download govulncheck locally if necessary.
 	$(call go-install-tool,$(GOVULNCHECK),golang.org/x/vuln/cmd/govulncheck,$(GOVULNCHECK_VERSION))
 
+# Find or download jq
+.PHONY: jq
+jq: ## Find or download jq
+	@{ \
+	set -e ;\
+	if command -v jq > /dev/null 2>&1 && [ "$$(jq --version 2>/dev/null)" = "$(JQ_VERSION)" ]; then \
+		exit 0; \
+	fi ;\
+	[ -d $(LOCALBIN) ] || mkdir -p $(LOCALBIN) ;\
+	curl -fSL --retry 5 --retry-delay 2 --retry-all-errors -o $(JQ) https://github.com/jqlang/jq/releases/download/$(JQ_VERSION)/jq-$(SYSTEM_NAME)-$(SYSTEM_ARCH) ;\
+	chmod +x $(JQ) ;\
+	}
+
 # Download promtool locally if necessary (conformance suite golden source; can't be go-installed
 # because prometheus/prometheus uses replace directives, so pull the release binary).
 .PHONY: promtool
@@ -1011,6 +1029,15 @@ promtool: ## Download promtool locally if necessary.
 .PHONY: govulncheck-run
 govulncheck-run: govulncheck ## Run govulncheck, applying excepted CVEs from hack/govulncheck.sh.
 	GOVULNCHECK=$(GOVULNCHECK) ./hack/govulncheck.sh
+
+# Run vulnerability scan and auto-update vulnerable modules.
+.PHONY: govulncheck-fix
+govulncheck-fix: govulncheck jq ## Run vulnerability scan and auto-update vulnerable modules.
+	$(GOVULNCHECK) -json ./... | \
+		$(JQ) -r '.finding | select(.trace[0].module and .fixed_version) | "\(.trace[0].module)@\(.fixed_version)"' | \
+		sort -u | \
+		xargs -I{} sh -c 'go get {} || true'
+	$(MAKE) tidy
 
 # go-install-tool will 'go install' any package $2 and install it to $1.
 PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
