@@ -908,7 +908,7 @@ GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 CHAINSAW ?= $(LOCALBIN)/chainsaw
 GOTESTSUM ?= $(LOCALBIN)/gotestsum
 GOVULNCHECK ?= $(LOCALBIN)/govulncheck
-JQ ?= $(LOCALBIN)/jq
+JQ ?= $(or $(shell command -v jq 2>/dev/null),$(LOCALBIN)/jq)
 
 # renovate: datasource=go depName=sigs.k8s.io/kustomize/kustomize/v5
 KUSTOMIZE_VERSION ?= v5.8.2
@@ -1033,10 +1033,20 @@ govulncheck-run: govulncheck ## Run govulncheck, applying excepted CVEs from hac
 # Run vulnerability scan and auto-update vulnerable modules.
 .PHONY: govulncheck-fix
 govulncheck-fix: govulncheck jq ## Run vulnerability scan and auto-update vulnerable modules.
-	$(GOVULNCHECK) -json ./... | \
-		$(JQ) -r '.finding | select(.trace[0].module and .fixed_version) | "\(.trace[0].module)@\(.fixed_version)"' | \
-		sort -u | \
-		xargs -I{} sh -c 'go get {} || true'
+	@set -e; for dir in $(GO_MODULE_DIRS); do \
+		echo "govulncheck-fix: $$dir"; \
+		findings=$$(cd $$dir && $(GOVULNCHECK) -json ./... | \
+			$(JQ) -r '.finding | select(.trace[0].module and .fixed_version) | "\(.trace[0].module)@\(.fixed_version)"' | \
+			sort -u); \
+		go_version=$$(echo "$$findings" | grep '^stdlib@' | sed 's/^stdlib@v//'); \
+		module_updates=$$(echo "$$findings" | grep -v '^stdlib@'); \
+		if [ -n "$$go_version" ]; then \
+			go -C $$dir get go@$$go_version || true; \
+		fi; \
+		if [ -n "$$module_updates" ]; then \
+			echo "$$module_updates" | xargs -I{} go -C $$dir get {} || true; \
+		fi; \
+	done
 	$(MAKE) tidy
 
 # go-install-tool will 'go install' any package $2 and install it to $1.
